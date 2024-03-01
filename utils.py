@@ -4,7 +4,7 @@ from medpy import metric
 from scipy.ndimage import zoom
 import torch.nn as nn
 import SimpleITK as sitk
-
+from torch import Tensor
 
 class DiceLoss(nn.Module):
     def __init__(self, n_classes):
@@ -44,10 +44,31 @@ class DiceLoss(nn.Module):
             loss += dice * weight[i]
         return loss / self.n_classes
 
+def dice_coeff(input: Tensor, target: Tensor, reduce_batch_first: bool = False, epsilon: float = 1e-6):
+    # Average of Dice coefficient for all batches, or for a single mask
+    # reduce_batch_first为True，那么按一个batch的所有图片计算dice
+    # reduce_batch_first为False，那么先按每个图片计算dice，再取所有dice的平均值
+    assert input.size()== target.size()
+    assert input.dim() == 3 or not reduce_batch_first
+
+    sum_dim = (-1, -2) if input.dim() == 2 or not reduce_batch_first else (-1, -2, -3)
+
+    inter = 2 * (input * target).sum(dim=sum_dim)
+    sets_sum = input.sum(dim=sum_dim) + target.sum(dim=sum_dim)
+    # 将sets_sum的0值替换为inter的值
+    sets_sum = torch.where(sets_sum == 0, inter, sets_sum)
+
+    dice = (inter + epsilon) / (sets_sum + epsilon)
+    return dice.mean()
 
 def calculate_metric_percase(pred, gt):
     pred[pred > 0] = 1
     gt[gt > 0] = 1
+    
+    dice = dice_coeff(torch.Tensor(pred), torch.Tensor(gt), False)
+    hd95 = 0
+    return dice, hd95
+    
     if pred.sum() > 0 and gt.sum()>0:
         dice = metric.binary.dc(pred, gt)
         hd95 = metric.binary.hd95(pred, gt)

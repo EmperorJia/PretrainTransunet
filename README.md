@@ -6,9 +6,9 @@ This repo holds code for [TransUNet: Transformers Make Strong Encoders for Medic
 ### 1. Download Google pre-trained ViT models
 * [Get models in this link](https://console.cloud.google.com/storage/vit_models/): R50-ViT-B_16, ViT-B_16, ViT-L_16...
 ```bash
-wget https://storage.googleapis.com/vit_models/imagenet21k/{MODEL_NAME}.npz &&
-mkdir ../model/vit_checkpoint/imagenet21k &&
-mv {MODEL_NAME}.npz ../model/vit_checkpoint/imagenet21k/{MODEL_NAME}.npz
+wget https://storage.googleapis.com/vit_models/imagenet21k/R50-ViT-B_16.npz &&
+mkdir -p ../model/vit_checkpoint/imagenet21k &&
+mv R50-ViT-B_16.npz ../model/vit_checkpoint/imagenet21k/R50-ViT-B_16.npz
 ```
 
 ### 2. Prepare data

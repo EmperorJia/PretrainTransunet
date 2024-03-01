@@ -7,17 +7,25 @@ import torch
 import torch.backends.cudnn as cudnn
 from networks.vit_seg_modeling import VisionTransformer as ViT_seg
 from networks.vit_seg_modeling import CONFIGS as CONFIGS_ViT_seg
-from trainer import trainer_synapse
+from trainer import trainer_synapse, inference_slice
+from torch.utils.data import DataLoader
+import sys
+from tqdm import tqdm
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
                     default='../data/Synapse/train_npz', help='root dir for data')
 parser.add_argument('--dataset', type=str,
-                    default='Synapse', help='experiment_name')
+                    default='nii', help='experiment_name')
+parser.add_argument('--images_dir', type=str,
+                    default='/home/peijia/medical_dataset/image', help='image dir')
+parser.add_argument('--mask_dir', type=str,
+                    default='/home/peijia/medical_dataset/mask', help='mask dir')
 parser.add_argument('--list_dir', type=str,
                     default='./lists/lists_Synapse', help='list dir')
 parser.add_argument('--num_classes', type=int,
-                    default=9, help='output channel of network')
+                    default=2, help='output channel of network')
 parser.add_argument('--max_iterations', type=int,
                     default=30000, help='maximum epoch number to train')
 parser.add_argument('--max_epochs', type=int,
@@ -41,6 +49,35 @@ parser.add_argument('--vit_patches_size', type=int,
                     default=16, help='vit_patches_size, default is 16')
 args = parser.parse_args()
 
+# def inference(args, model, test_save_path=None):
+#     from datasets.dataset_synapse import TetsNiiDataset
+#     split_path = '/home/peijia/medical_dataset/'
+#     split_list = ['test_img.txt']
+#     for i, file_name in enumerate(split_list):
+#         split_list[i] = split_path + file_name
+    
+#     db_test = TetsNiiDataset(None, args.images_dir, args.mask_dir, split_list, split="test")
+#     testloader = DataLoader(db_test, batch_size=1, shuffle=False, num_workers=1)
+#     logging.info("{} test iterations per epoch".format(len(testloader)))
+#     model.eval()
+#     metric_list = 0.0
+#     for i_batch, sampled_batch in tqdm(enumerate(testloader)):
+#         h, w = sampled_batch["image"].size()[2:]
+#         image, label = sampled_batch["image"], sampled_batch["label"]
+#         metric_i = test_single_volume(image, label, model, classes=args.num_classes, patch_size=[args.img_size, args.img_size],
+#                                       test_save_path=test_save_path, case=None)
+#         metric_list += np.array(metric_i)
+#         logging.info('idx %s mean_dice %f mean_hd95 %f' % (i_batch, np.mean(metric_i, axis=0)[0], np.mean(metric_i, axis=0)[1]))
+#     metric_list = metric_list / len(db_test)
+#     for i in range(1, args.num_classes):
+#         logging.info('Mean class %d mean_dice %f mean_hd95 %f' % (i, metric_list[i-1][0], metric_list[i-1][1]))
+#     performance = np.mean(metric_list, axis=0)[0]
+#     mean_hd95 = np.mean(metric_list, axis=0)[1]
+#     logging.info('Testing performance in best val model: mean_dice : %f mean_hd95 : %f' % (performance, mean_hd95))
+#     return "Testing Finished!"
+
+
+
 
 if __name__ == "__main__":
     if not args.deterministic:
@@ -56,18 +93,18 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(args.seed)
     dataset_name = args.dataset
     dataset_config = {
-        'Synapse': {
-            'root_path': '../data/Synapse/train_npz',
-            'list_dir': './lists/lists_Synapse',
-            'num_classes': 9,
+        'nii': {
+            'root_path': '/home/peijia/medical_dataset',
+            'list_dir': '/home/peijia/medical_dataset',
+            'num_classes': 2,
         },
     }
     args.num_classes = dataset_config[dataset_name]['num_classes']
     args.root_path = dataset_config[dataset_name]['root_path']
     args.list_dir = dataset_config[dataset_name]['list_dir']
     args.is_pretrain = True
-    args.exp = 'TU_' + dataset_name + str(args.img_size)
-    snapshot_path = "../model/{}/{}".format(args.exp, 'TU')
+    args.exp = 'No_1_' + dataset_name + str(args.img_size)
+    snapshot_path = "./log_{}".format(args.exp)
     snapshot_path = snapshot_path + '_pretrain' if args.is_pretrain else snapshot_path
     snapshot_path += '_' + args.vit_name
     snapshot_path = snapshot_path + '_skip' + str(args.n_skip)
@@ -89,5 +126,29 @@ if __name__ == "__main__":
     net = ViT_seg(config_vit, img_size=args.img_size, num_classes=config_vit.n_classes).cuda()
     net.load_from(weights=np.load(config_vit.pretrained_path))
 
-    trainer = {'Synapse': trainer_synapse,}
-    trainer[dataset_name](args, net, snapshot_path)
+    trainer_synapse(args, net, snapshot_path)
+
+    snapshot = os.path.join(snapshot_path, 'best_model.pth')
+    if not os.path.exists(snapshot): snapshot = snapshot.replace('best_model', 'epoch_'+str(args.max_epochs-1))
+    net.load_state_dict(torch.load(snapshot))
+    snapshot_name = snapshot_path.split('/')[-1]
+
+    log_folder = './test_log/test_log_' + args.exp
+    os.makedirs(log_folder, exist_ok=True)
+    logging.basicConfig(filename=log_folder + '/'+snapshot_name+".txt", level=logging.INFO, format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    logging.info(str(args))
+    logging.info(snapshot_name)
+
+    
+    test_save_path = None
+    # inference(args, net, test_save_path)
+
+    split_path='/home/peijia/medical_dataset/'
+    split_list=['test_img.txt']
+    from datasets.dataset_synapse import NiiDataset
+    for i, file_name in enumerate(split_list):
+        split_list[i] = split_path + file_name
+    db_test = NiiDataset(None, args.images_dir, args.mask_dir, split_list, split="test")
+    
+    inference_slice(args, net, db_test, test_save_path)
