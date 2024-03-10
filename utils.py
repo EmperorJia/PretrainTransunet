@@ -5,6 +5,7 @@ from scipy.ndimage import zoom
 import torch.nn as nn
 import SimpleITK as sitk
 from torch import Tensor
+from datasets.data_process_utils import insert_resampled_image_back
 
 class DiceLoss(nn.Module):
     def __init__(self, n_classes):
@@ -66,8 +67,7 @@ def calculate_metric_percase(pred, gt):
     gt[gt > 0] = 1
     
     dice = dice_coeff(torch.Tensor(pred), torch.Tensor(gt), False)
-    hd95 = 0
-    return dice, hd95
+    return dice.item()
     
     if pred.sum() > 0 and gt.sum()>0:
         dice = metric.binary.dc(pred, gt)
@@ -79,36 +79,26 @@ def calculate_metric_percase(pred, gt):
         return 0, 0
 
 
-def test_single_volume(image, label, net, classes, patch_size=[256, 256], test_save_path=None, case=None, z_spacing=1):
-    image, label = image.squeeze(0).cpu().detach().numpy(), label.squeeze(0).cpu().detach().numpy()
-    if len(image.shape) == 3:
-        prediction = np.zeros_like(label)
-        for ind in range(image.shape[0]):
-            slice = image[ind, :, :]
-            x, y = slice.shape[0], slice.shape[1]
-            if x != patch_size[0] or y != patch_size[1]:
-                slice = zoom(slice, (patch_size[0] / x, patch_size[1] / y), order=3)  # previous using 0
-            input = torch.from_numpy(slice).unsqueeze(0).unsqueeze(0).float().cuda()
-            net.eval()
-            with torch.no_grad():
-                outputs = net(input)
-                out = torch.argmax(torch.softmax(outputs, dim=1), dim=1).squeeze(0)
-                out = out.cpu().detach().numpy()
-                if x != patch_size[0] or y != patch_size[1]:
-                    pred = zoom(out, (x / patch_size[0], y / patch_size[1]), order=0)
-                else:
-                    pred = out
-                prediction[ind] = pred
-    else:
-        input = torch.from_numpy(image).unsqueeze(
-            0).unsqueeze(0).float().cuda()
-        net.eval()
-        with torch.no_grad():
-            out = torch.argmax(torch.softmax(net(input), dim=1), dim=1).squeeze(0)
-            prediction = out.cpu().detach().numpy()
-    metric_list = []
-    for i in range(1, classes):
-        metric_list.append(calculate_metric_percase(prediction == i, label == i))
+def test_single_volume(image, label, net, classes, patch_size=[256, 256], test_save_path=None, case=None, z_spacing=1, bbox=None):
+    # image, label = image.squeeze(0).cpu().detach().numpy(), label.squeeze(0).cpu().detach().numpy()
+    net.eval()
+    with torch.no_grad():
+        image = image.cuda()
+        outputs = net(image)
+        # [32, 2, h, w]
+        out = torch.argmax(torch.softmax(outputs, dim=1), dim=1)
+        #[32, 160, 160]
+        out = out.cpu().detach().numpy()
+
+    # [1, 1, 32, 160, 160]
+    label = label.squeeze(0).cpu().detach().numpy().astype(np.float32)
+    bbox = [t.item() for t in bbox]
+    prediction = insert_resampled_image_back(np.zeros_like(label), out, bbox)
+
+    sum_metric = 0
+    for index in range(label.shape[0]):
+        metric = calculate_metric_percase(prediction[index], label[index])
+        sum_metric += metric
 
     if test_save_path is not None:
         img_itk = sitk.GetImageFromArray(image.astype(np.float32))
@@ -120,4 +110,4 @@ def test_single_volume(image, label, net, classes, patch_size=[256, 256], test_s
         sitk.WriteImage(prd_itk, test_save_path + '/'+case + "_pred.nii.gz")
         sitk.WriteImage(img_itk, test_save_path + '/'+ case + "_img.nii.gz")
         sitk.WriteImage(lab_itk, test_save_path + '/'+ case + "_gt.nii.gz")
-    return metric_list
+    return sum_metric, prediction, label

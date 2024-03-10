@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from.self_supervised import SelfSupervisedCNN
+
 
 def np2th(weights, conv=False):
     """Possibly convert HWIO to OIHW."""
@@ -117,6 +119,19 @@ class ResNetV2(nn.Module):
         width = int(64 * width_factor)
         self.width = width
 
+        self.pretrain_model = SelfSupervisedCNN()
+        self.pretrain_model.load_state_dict(torch.load('/home/peijia/TransUNet/networks/compatible_pretrain.pth'))
+        # self.pretrain_model = self.pretrain_model.get_encoder()
+        # 【重要通知】这里还需要考虑  bs和深度（32）同时存在的影响
+        self.max_pool_3d_to_2d = nn.MaxPool3d(kernel_size=(8, 1, 1), stride=1, padding=0)
+        self.up = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose3d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose3d(32, 1, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU()
+        )
+
         self.root = nn.Sequential(OrderedDict([
             ('conv', StdConv2d(3, width, kernel_size=7, stride=2, bias=False, padding=3)),
             ('gn', nn.GroupNorm(32, width, eps=1e-6)),
@@ -141,7 +156,27 @@ class ResNetV2(nn.Module):
 
     def forward(self, x):
         features = []
+        #print('x.size()', x.size())
+        #  b, c, in_size, _ = x.size()
+        
+        # 该层输出大小刚好为[bs, 64, w, h]，通道数刚好和3d卷积的大小一样，因此可以直接替换
+        # x = self.root(x)
+        # [bs, 64, 8, 40, 40]
+        x = x.reshape([-1, 1, 32, 160, 160])
+        # 【重要通知，这里可以调】
+        #print('x.size()', x.size())
+        x = self.pretrain_model(x)
+        #print('x.size()', x.size())
+        # x = self.max_pool_3d_to_2d(x)
+        # x = self.decoder(x)
+        x = x.reshape([-1, 1, 160, 160])
+        if x.size()[1] == 1:
+           x = x.repeat(1,3,1,1)
         b, c, in_size, _ = x.size()
+        #print('x.size()', x.size())
+        # [bs, 64, 40, 40]
+        # 问题出在这里，这里需要的是，maxpool前的大小，即112*112
+        # 但是因为3d卷积直接把maxpool操作给做了，因此大小就直接变成为56*56，导致后面的大小对不上了
         x = self.root(x)
         features.append(x)
         x = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)(x)
@@ -156,5 +191,9 @@ class ResNetV2(nn.Module):
             else:
                 feat = x
             features.append(feat)
+            #print('feat.size()', feat.size())
+        #print(len(features))
+        
         x = self.body[-1](x)
+        #print(x.size())
         return x, features[::-1]

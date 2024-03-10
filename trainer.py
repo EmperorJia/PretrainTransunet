@@ -40,8 +40,41 @@ def inference_slice(args, model, dataset, test_save_path=None, state='test'):
     logging.info(f'{state} mean_dice : {performance} ')
     return performance
 
+def inference_batch(args, model, dataset, test_save_path=None, state='test'):
+
+    testloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=1)
+
+    # logging.info("{} test iterations per epoch".format(len(testloader)))
+    model.eval()
+    metrics = 0.0
+    len_slices = 0
+    for i_batch, sampled_batch in tqdm(enumerate(testloader)):
+        # image: [bs, 1, 32, 160, 160]
+        # label: [bs, 1, 32, 160, 160]
+        
+            # 要点1：大小要一样
+            # 要点2：为什么这里要指定args.img_size，不指定会进行缩放
+        
+
+        image = sampled_batch["image"]
+        label = sampled_batch["origin_mask"]
+        bbox = sampled_batch["bbox"]
+        # print('image size(): ', image.shape)
+        len_slices += label.shape[1]
+
+        metric_i, _, _ = test_single_volume(image, label, model, classes=args.num_classes, patch_size=[args.img_size, args.img_size],
+                                    test_save_path=test_save_path, case=None, bbox=bbox)
+        metrics += metric_i
+            # logging.info('idx %s mean_dice %f mean_hd95 %f' % (i_batch, np.mean(metric_i, axis=0)[0], np.mean(metric_i, axis=0)[1]))
+        
+    metrics = metrics / len_slices
+    # for i in range(1, args.num_classes):
+    #     logging.info('Mean class %d mean_dice %f mean_hd95 %f' % (i, metric_list[i-1][0], metric_list[i-1][1]))
+    logging.info(f'{state} mean_dice : {metrics} ')
+    return metrics
+
 def trainer_synapse(args, model, snapshot_path):
-    from datasets.dataset_synapse import Synapse_dataset, RandomGenerator, NiiDataset
+    from datasets.dataset_synapse import Synapse_dataset, RandomGenerator, NiiDataset, pretrain_dataset
     logging.basicConfig(filename=snapshot_path + "/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -59,14 +92,15 @@ def trainer_synapse(args, model, snapshot_path):
     split_list = ['train_img_1.txt', 'train_img_2.txt', 'train_img_3.txt', 'train_img_4.txt']
     for i, file_name in enumerate(split_list):
         split_list[i] = split_path + file_name
-    transform=transforms.Compose([RandomGenerator(output_size=[args.img_size, args.img_size])])
-    db_train = NiiDataset(transform, args.images_dir, args.mask_dir, split_list, split="train", zero_mask=True)
+    # transform=transforms.Compose([RandomGenerator(output_size=[args.img_size, args.img_size])])
+    transform = None
+    db_train = pretrain_dataset(transform, args.images_dir, args.mask_dir, split_list, split="train")
 
     # 验证集
     split_list=['train_img_5.txt']
     for i, file_name in enumerate(split_list):
         split_list[i] = split_path + file_name
-    db_val = NiiDataset(None, args.images_dir, args.mask_dir, split_list, split="test")
+    db_val = pretrain_dataset(None, args.images_dir, args.mask_dir, split_list, split="test")
 
     print("The length of train set is: {}".format(len(db_train)))
 
@@ -92,8 +126,13 @@ def trainer_synapse(args, model, snapshot_path):
         for i_batch, sampled_batch in enumerate(trainloader):
             image_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             image_batch, label_batch = image_batch.cuda(), label_batch.cuda()
+            label_batch = label_batch.reshape([-1, 160, 160])
             outputs = model(image_batch)
+            #print(label_batch.size())
+            #print(label_batch[:].size())
+            #print('outputs size: ', outputs.size())
             loss_ce = ce_loss(outputs, label_batch[:].long())
+            
             loss_dice = dice_loss(outputs, label_batch, softmax=True)
             loss = 0.5 * loss_ce + 0.5 * loss_dice
             optimizer.zero_grad()
@@ -110,19 +149,20 @@ def trainer_synapse(args, model, snapshot_path):
 
             logging.info('iteration %d : loss : %f, loss_ce: %f' % (iter_num, loss.item(), loss_ce.item()))
 
-            if iter_num % 20 == 0:
-                image = image_batch[1, 0:1, :, :]
-                image = (image - image.min()) / (image.max() - image.min())
-                writer.add_image('train/Image', image, iter_num)
-                outputs = torch.argmax(torch.softmax(outputs, dim=1), dim=1, keepdim=True)
-                writer.add_image('train/Prediction', outputs[1, ...] * 50, iter_num)
-                labs = label_batch[1, ...].unsqueeze(0) * 50
-                writer.add_image('train/GroundTruth', labs, iter_num)
+            # if iter_num % 20 == 0:
+            #     image_batch = image_batch.reshape([-1, 1, 160, 160])
+            #     image = image_batch[1, 0:1, :, :]
+            #     image = (image - image.min()) / (image.max() - image.min())
+            #     writer.add_image('train/Image', image, iter_num)
+            #     outputs = torch.argmax(torch.softmax(outputs, dim=1), dim=1, keepdim=True)
+            #     writer.add_image('train/Prediction', outputs[1, ...] * 50, iter_num)
+            #     labs = label_batch[1, ...].unsqueeze(0) * 50
+            #     writer.add_image('train/GroundTruth', labs, iter_num)
 
         save_interval = 50  # int(max_epoch/6)
         if epoch_num > int(max_epoch / 2) and (epoch_num + 1) % save_interval == 0:
             logging.info("starting validation")
-            inference_slice(args, model, db_val, None, state='val')
+            inference_batch(args, model, db_val, None, state='val')
             save_mode_path = os.path.join(snapshot_path, 'epoch_' + str(epoch_num) + '.pth')
             torch.save(model.state_dict(), save_mode_path)
             logging.info("save model to {}".format(save_mode_path))

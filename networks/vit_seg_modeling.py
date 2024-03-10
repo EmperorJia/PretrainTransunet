@@ -142,6 +142,7 @@ class Embeddings(nn.Module):
         if self.hybrid:
             self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers, width_factor=config.resnet.width_factor)
             in_channels = self.hybrid_model.width * 16
+        #print('in_channels: ', in_channels)
         self.patch_embeddings = Conv2d(in_channels=in_channels,
                                        out_channels=config.hidden_size,
                                        kernel_size=patch_size,
@@ -153,10 +154,12 @@ class Embeddings(nn.Module):
 
     def forward(self, x):
         if self.hybrid:
+            #print('x size: ', x.size())
+            #print('though hybrid')
             x, features = self.hybrid_model(x)
         else:
             features = None
-        x = self.patch_embeddings(x)  # (B, hidden. n_patches^(1/2), n_patches^(1/2))
+        x = self.patch_embeddings(x)  # (B, hidden, n_patches^(1/2), n_patches^(1/2))
         x = x.flatten(2)
         x = x.transpose(-1, -2)  # (B, n_patches, hidden)
 
@@ -252,6 +255,7 @@ class Transformer(nn.Module):
 
     def forward(self, input_ids):
         embedding_output, features = self.embeddings(input_ids)
+        #print('feature depth: ', len(features))
         encoded, attn_weights = self.encoder(embedding_output)  # (B, n_patch, hidden)
         return encoded, attn_weights, features
 
@@ -357,13 +361,20 @@ class DecoderCup(nn.Module):
         h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))
         x = hidden_states.permute(0, 2, 1)
         x = x.contiguous().view(B, hidden, h, w)
+        #print('decoder mid size: ', x.size())
         x = self.conv_more(x)
+        #print('feature len: ', len(features))
         for i, decoder_block in enumerate(self.blocks):
             if features is not None:
                 skip = features[i] if (i < self.config.n_skip) else None
             else:
                 skip = None
+            # if skip is not None:
+            #     print('skip size: ', skip.size())
+            # print('decoder midc skip size: ', x.size())
+
             x = decoder_block(x, skip=skip)
+        
         return x
 
 
@@ -383,11 +394,14 @@ class VisionTransformer(nn.Module):
         self.config = config
 
     def forward(self, x):
-        if x.size()[1] == 1:
-            x = x.repeat(1,3,1,1)
+        # 假设输入的大小是[bs*c, d, w, h]
+        #if x.size()[1] == 1:
+        #    x = x.repeat(1,3,1,1)
         x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
         x = self.decoder(x, features)
+        # print('decoder output: ', x.size())
         logits = self.segmentation_head(x)
+        #print('logits output: ', logits.size())
         return logits
 
     def load_from(self, weights):

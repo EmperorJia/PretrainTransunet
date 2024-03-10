@@ -10,6 +10,8 @@ from pathlib import Path
 from tqdm import tqdm
 import SimpleITK as sitk
 
+from .data_process_utils import *
+
 
 def random_rot_flip(image, label):
     k = np.random.randint(0, 4)
@@ -88,7 +90,7 @@ def transunet_preprocess(img_array):
     return img_array
 
 class NiiDataset(Dataset):
-    def __init__(self, transform, images_dir: str, mask_dir: str, split_list, split, zero_mask=True, read_disc = False):
+    def __init__(self, transform, images_dir: str, mask_dir: str, split_list, split, zero_mask=True, read_disc = False, is_test=True):
         self.transform = transform
         self.images_dir = Path(images_dir)
         self.mask_dir = Path(mask_dir)
@@ -103,6 +105,9 @@ class NiiDataset(Dataset):
             raise RuntimeError(f'No input file found in {images_dir}, make sure you put your images there')
 
         print(f'Creating {split} NiiDataset with {len(self.ids)} examples')
+
+        if is_test:
+            self.ids = self.ids[:32]
 
         if read_disc:
             self.slices = torch.load('./slices.pt')
@@ -241,3 +246,105 @@ class TetsNiiDataset(Dataset):
             label = torch.from_numpy(mask_array)
             sample = {'image': image, 'label': label}
         return sample
+
+
+class pretrain_dataset(Dataset):
+    def __init__(self, transform, images_dir: str, mask_dir: str, split_list, split, is_test=False):
+        self.transform = transform
+        self.images_dir = Path(images_dir)
+        self.mask_dir = Path(mask_dir)
+
+        self.num_not_32 = 0
+        
+        self.ids = []
+        for data_file in split_list:
+            self.ids += open(data_file).readlines()
+
+
+        if not self.ids:
+            raise RuntimeError(f'No input file found in {images_dir}, make sure you put your images there')
+
+        print(f'Creating {split} NiiDataset with {len(self.ids)} examples')
+
+        self.is_test = is_test
+
+        if is_test:
+            self.ids = self.ids[:2]
+
+        self.slices = []
+        self.masks = []
+        if is_test:
+            self.origin_img = []
+        self.bbox_list = []
+        self.mask_list = []
+
+        for name in tqdm(self.ids):
+            name = name.strip('\n')
+            img_path = os.path.join(images_dir, name)
+
+            name = name[:-7]
+            name = name.replace('_image', '_mask')
+            mask_path = next(self.mask_dir.glob(f'{name}*'))
+
+            # 执行预处理
+            img, mask, img_array, bbox, origin_mask = self.preprocess(img_path, mask_path)
+            if img.shape[0]!=32:
+                self.num_not_32 += 1
+                continue
+
+            self.slices.append(img)
+            self.masks.append(mask)
+            if is_test:
+                self.origin_img.append(img_array)
+            self.bbox_list.append(bbox)
+            self.mask_list.append(origin_mask)
+        
+        print('num_not_32: ', self.num_not_32)
+
+    def __len__(self):
+        return len(self.slices)
+
+    @staticmethod
+    def preprocess(img_path, mask_path):
+        # 读取原始图像和掩码图像
+        img = sitk.ReadImage(str(img_path))
+        mask = sitk.ReadImage(str(mask_path))
+
+        # 将图像和掩码转换为NumPy数组
+        img_array = sitk.GetArrayFromImage(img)
+        mask_array = sitk.GetArrayFromImage(mask)
+
+        # 确保图像和掩码的形状和通道数正确
+        assert img_array.shape == mask_array.shape, f'Image and mask shape mismatch: {img_array.shape} vs {mask_array.shape}'
+
+        img_array = np_clip_window(img_array)
+        original_mask_size = img_array.shape
+        fine_size = [32, 160, 160]
+        new_np_image, new_np_mask, bbox = np_crop_according_to_mask(
+            img_array, mask_array, original_mask_size, fine_size, xy_extend=30, z_extend=2)
+        
+        return new_np_image, new_np_mask, img_array, bbox, mask_array
+
+    def __getitem__(self, idx):
+        img_array = self.slices[idx][np.newaxis, ...].astype(np.float32)
+        mask_array = self.masks[idx][np.newaxis, ...].astype(np.float32)
+        if self.is_test:
+            origin_array = self.origin_img[idx][np.newaxis, ...].astype(np.float32)
+        else:
+            origin_array = None
+
+        bbox = self.bbox_list[idx]
+
+        origin_mask = self.mask_list[idx].astype(bool)
+
+        img_array = np_normalize(img_array)
+        # print('img size: ', img_array.shape)
+        if self.is_test:
+            sample = {'image': img_array, 'label': mask_array, 'origin': origin_array, 'bbox':bbox, 'origin_mask': origin_mask}
+        else:
+            sample = {'image': img_array, 'label': mask_array, 'bbox':bbox, 'origin_mask': origin_mask}
+        # 没有随机旋转
+        # if self.transform:
+        #     sample = self.transform(sample)
+        return sample
+

@@ -7,7 +7,7 @@ import torch
 import torch.backends.cudnn as cudnn
 from networks.vit_seg_modeling import VisionTransformer as ViT_seg
 from networks.vit_seg_modeling import CONFIGS as CONFIGS_ViT_seg
-from trainer import trainer_synapse, inference_slice
+from trainer import trainer_synapse, inference_slice, inference_batch
 from torch.utils.data import DataLoader
 import sys
 from tqdm import tqdm
@@ -31,14 +31,15 @@ parser.add_argument('--max_iterations', type=int,
 parser.add_argument('--max_epochs', type=int,
                     default=150, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int,
-                    default=24, help='batch_size per gpu')
+                    default=4, help='batch_size per gpu')
 parser.add_argument('--n_gpu', type=int, default=1, help='total gpu')
 parser.add_argument('--deterministic', type=int,  default=1,
                     help='whether use deterministic training')
 parser.add_argument('--base_lr', type=float,  default=0.01,
                     help='segmentation network learning rate')
+# 【重要通知，这里设定预处理后的图像大小】
 parser.add_argument('--img_size', type=int,
-                    default=224, help='input patch size of network input')
+                    default=160, help='input patch size of network input')
 parser.add_argument('--seed', type=int,
                     default=1234, help='random seed')
 parser.add_argument('--n_skip', type=int,
@@ -103,18 +104,20 @@ if __name__ == "__main__":
     args.root_path = dataset_config[dataset_name]['root_path']
     args.list_dir = dataset_config[dataset_name]['list_dir']
     args.is_pretrain = True
-    args.exp = 'No_1_' + dataset_name + str(args.img_size)
-    snapshot_path = "./log_{}".format(args.exp)
-    snapshot_path = snapshot_path + '_pretrain' if args.is_pretrain else snapshot_path
-    snapshot_path += '_' + args.vit_name
-    snapshot_path = snapshot_path + '_skip' + str(args.n_skip)
-    snapshot_path = snapshot_path + '_vitpatch' + str(args.vit_patches_size) if args.vit_patches_size!=16 else snapshot_path
-    snapshot_path = snapshot_path+'_'+str(args.max_iterations)[0:2]+'k' if args.max_iterations != 30000 else snapshot_path
-    snapshot_path = snapshot_path + '_epo' +str(args.max_epochs) if args.max_epochs != 30 else snapshot_path
-    snapshot_path = snapshot_path+'_bs'+str(args.batch_size)
-    snapshot_path = snapshot_path + '_lr' + str(args.base_lr) if args.base_lr != 0.01 else snapshot_path
-    snapshot_path = snapshot_path + '_'+str(args.img_size)
-    snapshot_path = snapshot_path + '_s'+str(args.seed) if args.seed!=1234 else snapshot_path
+    # args.exp = 'No_1_' + dataset_name + str(args.img_size)
+    # snapshot_path = "./log_{}".format(args.exp)
+    # snapshot_path = snapshot_path + '_pretrain' if args.is_pretrain else snapshot_path
+    # snapshot_path += '_' + args.vit_name
+    # snapshot_path = snapshot_path + '_skip' + str(args.n_skip)
+    # snapshot_path = snapshot_path + '_vitpatch' + str(args.vit_patches_size) if args.vit_patches_size!=16 else snapshot_path
+    # snapshot_path = snapshot_path+'_'+str(args.max_iterations)[0:2]+'k' if args.max_iterations != 30000 else snapshot_path
+    # snapshot_path = snapshot_path + '_epo' +str(args.max_epochs) if args.max_epochs != 30 else snapshot_path
+    # snapshot_path = snapshot_path+'_bs'+str(args.batch_size)
+    # snapshot_path = snapshot_path + '_lr' + str(args.base_lr) if args.base_lr != 0.01 else snapshot_path
+    # snapshot_path = snapshot_path + '_'+str(args.img_size)
+    # snapshot_path = snapshot_path + '_s'+str(args.seed) if args.seed!=1234 else snapshot_path'
+    args.exp = 'trained_model/pretrain_complete'
+    snapshot_path = 'trained_model/pretrain_complete'
 
     if not os.path.exists(snapshot_path):
         os.makedirs(snapshot_path)
@@ -126,14 +129,14 @@ if __name__ == "__main__":
     net = ViT_seg(config_vit, img_size=args.img_size, num_classes=config_vit.n_classes).cuda()
     net.load_from(weights=np.load(config_vit.pretrained_path))
 
-    trainer_synapse(args, net, snapshot_path)
+    # trainer_synapse(args, net, snapshot_path)
 
     snapshot = os.path.join(snapshot_path, 'best_model.pth')
     if not os.path.exists(snapshot): snapshot = snapshot.replace('best_model', 'epoch_'+str(args.max_epochs-1))
     net.load_state_dict(torch.load(snapshot))
     snapshot_name = snapshot_path.split('/')[-1]
 
-    log_folder = './test_log/test_log_' + args.exp
+    log_folder = './' + snapshot_path + '/test_log_'
     os.makedirs(log_folder, exist_ok=True)
     logging.basicConfig(filename=log_folder + '/'+snapshot_name+".txt", level=logging.INFO, format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -142,13 +145,13 @@ if __name__ == "__main__":
 
     
     test_save_path = None
-    # inference(args, net, test_save_path)
+    # inference(ar  gs, net, test_save_path)
 
     split_path='/home/peijia/medical_dataset/'
     split_list=['test_img.txt']
-    from datasets.dataset_synapse import NiiDataset
+    from datasets.dataset_synapse import NiiDataset, pretrain_dataset
     for i, file_name in enumerate(split_list):
         split_list[i] = split_path + file_name
-    db_test = NiiDataset(None, args.images_dir, args.mask_dir, split_list, split="test")
+    db_test = pretrain_dataset(None, args.images_dir, args.mask_dir, split_list, split="test")
     
-    inference_slice(args, net, db_test, test_save_path)
+    inference_batch(args, net, db_test, test_save_path)
