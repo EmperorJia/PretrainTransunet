@@ -255,6 +255,7 @@ class pretrain_dataset(Dataset):
         self.mask_dir = Path(mask_dir)
 
         self.num_not_32 = 0
+        self.num_not_16 = 0
         
         self.ids = []
         for data_file in split_list:
@@ -292,6 +293,10 @@ class pretrain_dataset(Dataset):
                 self.num_not_32 += 1
                 continue
 
+            if img_array.shape[0]!=16:
+                self.num_not_16 += 1
+                continue
+
             self.slices.append(img)
             self.masks.append(mask)
             if is_test:
@@ -300,6 +305,7 @@ class pretrain_dataset(Dataset):
             self.mask_list.append(origin_mask)
         
         print('num_not_32: ', self.num_not_32)
+        print('num_not_16: ', self.num_not_16)
 
     def __len__(self):
         return len(self.slices)

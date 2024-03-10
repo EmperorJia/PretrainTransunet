@@ -116,8 +116,8 @@ if __name__ == "__main__":
     # snapshot_path = snapshot_path + '_lr' + str(args.base_lr) if args.base_lr != 0.01 else snapshot_path
     # snapshot_path = snapshot_path + '_'+str(args.img_size)
     # snapshot_path = snapshot_path + '_s'+str(args.seed) if args.seed!=1234 else snapshot_path'
-    args.exp = 'trained_model/pretrain_complete'
-    snapshot_path = 'trained_model/pretrain_complete'
+    args.exp = 'trained_model/pretrain_complete_xiaorong'
+    snapshot_path = 'trained_model/pretrain_complete_xiaorong'
 
     if not os.path.exists(snapshot_path):
         os.makedirs(snapshot_path)
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     net = ViT_seg(config_vit, img_size=args.img_size, num_classes=config_vit.n_classes).cuda()
     net.load_from(weights=np.load(config_vit.pretrained_path))
 
-    # trainer_synapse(args, net, snapshot_path)
+    trainer_synapse(args, net, snapshot_path)
 
     snapshot = os.path.join(snapshot_path, 'best_model.pth')
     if not os.path.exists(snapshot): snapshot = snapshot.replace('best_model', 'epoch_'+str(args.max_epochs-1))
