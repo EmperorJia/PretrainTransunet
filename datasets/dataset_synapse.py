@@ -249,13 +249,14 @@ class TetsNiiDataset(Dataset):
 
 
 class pretrain_dataset(Dataset):
-    def __init__(self, transform, images_dir: str, mask_dir: str, split_list, split, is_test=False):
+    def __init__(self, transform, images_dir: str, mask_dir: str, split_list, split, is_debug=False):
         self.transform = transform
         self.images_dir = Path(images_dir)
         self.mask_dir = Path(mask_dir)
 
         self.num_not_32 = 0
-        self.num_not_16 = 0
+
+        self.spilt = split
         
         self.ids = []
         for data_file in split_list:
@@ -267,14 +268,14 @@ class pretrain_dataset(Dataset):
 
         print(f'Creating {split} NiiDataset with {len(self.ids)} examples')
 
-        self.is_test = is_test
+        self.is_debug = is_debug
 
-        if is_test:
+        if is_debug:
             self.ids = self.ids[:2]
 
         self.slices = []
         self.masks = []
-        if is_test:
+        if is_debug:
             self.origin_img = []
         self.bbox_list = []
         self.mask_list = []
@@ -293,19 +294,14 @@ class pretrain_dataset(Dataset):
                 self.num_not_32 += 1
                 continue
 
-            if img_array.shape[0]!=16:
-                self.num_not_16 += 1
-                continue
-
             self.slices.append(img)
             self.masks.append(mask)
-            if is_test:
+            if is_debug:
                 self.origin_img.append(img_array)
             self.bbox_list.append(bbox)
             self.mask_list.append(origin_mask)
         
         print('num_not_32: ', self.num_not_32)
-        print('num_not_16: ', self.num_not_16)
 
     def __len__(self):
         return len(self.slices)
@@ -334,7 +330,7 @@ class pretrain_dataset(Dataset):
     def __getitem__(self, idx):
         img_array = self.slices[idx][np.newaxis, ...].astype(np.float32)
         mask_array = self.masks[idx][np.newaxis, ...].astype(np.float32)
-        if self.is_test:
+        if self.is_debug:
             origin_array = self.origin_img[idx][np.newaxis, ...].astype(np.float32)
         else:
             origin_array = None
@@ -345,10 +341,12 @@ class pretrain_dataset(Dataset):
 
         img_array = np_normalize(img_array)
         # print('img size: ', img_array.shape)
-        if self.is_test:
+        if self.is_debug:
             sample = {'image': img_array, 'label': mask_array, 'origin': origin_array, 'bbox':bbox, 'origin_mask': origin_mask}
-        else:
+        elif self.spilt=='test':
             sample = {'image': img_array, 'label': mask_array, 'bbox':bbox, 'origin_mask': origin_mask}
+        else:
+            sample = {'image': img_array, 'label': mask_array}
         # 没有随机旋转
         # if self.transform:
         #     sample = self.transform(sample)
