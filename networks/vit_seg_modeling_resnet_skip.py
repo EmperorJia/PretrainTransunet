@@ -162,8 +162,8 @@ class ResNetV2(nn.Module):
         # 该层输出大小刚好为[bs, 64, w, h]，通道数刚好和3d卷积的大小一样，因此可以直接替换
         # x = self.root(x)
         # [bs, 64, 8, 40, 40]
-        # x = x.reshape([-1, 1, 32, 160, 160])
-        # x = self.pretrain_model(x)
+        x = x.reshape([-1, 1, 32, 160, 160])
+        x = self.pretrain_model(x)
         x = x.reshape([-1, 1, 160, 160])
         if x.size()[1] == 1:
            x = x.repeat(1,3,1,1)
